@@ -10,7 +10,6 @@ const WEBM_ROTATION_SECONDS = 32;
 import { createPuck, enterPresentMode, exitPresentMode, setWaterShader, setWaterShoreFade, setSurfaceBumpStrength, setImageAdjust, setStyle, setZExaggeration, setCameraMode, getCameraMode, setPuckAlbedo, getFilterState, captureSnapshotPNG, recordRotation, getRecordingFileExtension, getPuckGeoParams, setBuildingsGroup, hasBuildings, clearBuildings, setFillLight } from './puck.js';
 import { loadLibrary, saveToLibrary, deleteFromLibrary } from './library.js';
 import { exportSTL, exportOBJ, exportGLB } from './stl.js';
-import { fetchWater, buildWaterMask } from './water.js';
 import { fetchBuildings, buildBuildingGroup } from './buildings.js';
 
 const state = {
@@ -628,11 +627,6 @@ $('capture-btn').addEventListener('click', async () => {
       lat: (result.bounds.north + result.bounds.south) / 2,
       lon: (result.bounds.east + result.bounds.west) / 2,
     };
-
-    setBusy('Detecting water…');
-    const overpass = await fetchWater(result.bounds);
-    const waterMask = buildWaterMask(overpass, result.heightmap, result.bounds, result.demtype);
-    if (waterMask) result.waterMask = waterMask;
 
     setBusy('Building 3D puck…');
     const puck = await createPuck(result, {
