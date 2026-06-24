@@ -5,15 +5,15 @@ from satellite imagery draped over real elevation data. Pan a map, frame a
 region, and a textured 3D model pops out the other end, ready to export as PNG,
 WebM, STL, OBJ, or GLB.
 
-![Mariposa County, California](media/mariposa_county_california.png)
+![Mariposa County, California](media/mariposa_county_california.jpg)
 
 ## Gallery
 
 <table>
   <tr>
-    <td width="33%"><img src="media/mollepata_cusco.png" alt="Mollepata, Cusco, Peru"><br><sub>Mollepata, Cusco</sub></td>
-    <td width="33%"><img src="media/butte_county_idaho.png" alt="Butte County, Idaho"><br><sub>Butte County, Idaho</sub></td>
-    <td width="33%"><img src="media/urrugne_nouvelle-aquitaine_france.png" alt="Urrugne, Nouvelle-Aquitaine, France"><br><sub>Urrugne, France</sub></td>
+    <td width="33%"><img src="media/mollepata_cusco.jpg" alt="Mollepata, Cusco, Peru"><br><sub>Mollepata, Cusco</sub></td>
+    <td width="33%"><img src="media/butte_county_idaho.jpg" alt="Butte County, Idaho"><br><sub>Butte County, Idaho</sub></td>
+    <td width="33%"><img src="media/urrugne_nouvelle-aquitaine_france.jpg" alt="Urrugne, Nouvelle-Aquitaine, France"><br><sub>Urrugne, France</sub></td>
   </tr>
 </table>
 
