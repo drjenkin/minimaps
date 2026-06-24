@@ -23,11 +23,11 @@ WebM, STL, OBJ, or GLB.
 
 - **Frame** any spot on Earth on a satellite map with country borders and labels.
 - **Capture** the region — imagery is stitched and draped over a real elevation
-  model to build a 3D relief puck with cream side walls and a flat base.
+  model to build a 3D relief puck.
 - **Style** it with filters, lighting, and z-exaggeration controls.
-- **Export** as PNG, WebM (spinning turntable), STL / OBJ (for 3D editors), or
-  GLB (textured, for the web / game engines).
-- **Save** pucks to a local in-browser library — nothing leaves your machine.
+- **Export** as PNG, WebM, STL / OBJ, or
+  GLB.
+- **Save** pucks to a local in-browser library.
 
 ## Quick start
 
