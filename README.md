@@ -5,20 +5,15 @@ from satellite imagery draped over real elevation data. Pan a map, frame a
 region, and a textured 3D model pops out the other end, ready to export as PNG,
 WebM, STL, OBJ, or GLB.
 
-![Coastal mountains puck](media/HIstbvWaYAA7yFP.jpg)
+![Mariposa County, California](media/mariposa_county_california.png)
 
 ## Gallery
 
 <table>
   <tr>
-    <td width="33%"><img src="media/HISj7Q9aUAAGPup.jpg" alt="Lone monolith in arid plain"></td>
-    <td width="33%"><img src="media/HISj7RKbMAApMh9.jpg" alt="Fjord cutting through highland mountain"></td>
-    <td width="33%"><img src="media/HI6uOcFb0AAIlAH.jpg" alt="Eroded badlands"></td>
-  </tr>
-  <tr>
-    <td><img src="media/HJFjMNFbYAA_Kgo.jpg" alt="Mountain rising over pivot-irrigation farms"></td>
-    <td><img src="media/HJK0YOyb0AA6ZL9.jpg" alt="Forested hills around a turquoise reservoir"></td>
-    <td></td>
+    <td width="33%"><img src="media/mollepata_cusco.png" alt="Mollepata, Cusco, Peru"><br><sub>Mollepata, Cusco</sub></td>
+    <td width="33%"><img src="media/butte_county_idaho.png" alt="Butte County, Idaho"><br><sub>Butte County, Idaho</sub></td>
+    <td width="33%"><img src="media/urrugne_nouvelle-aquitaine_france.png" alt="Urrugne, Nouvelle-Aquitaine, France"><br><sub>Urrugne, France</sub></td>
   </tr>
 </table>
 
