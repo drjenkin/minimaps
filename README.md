@@ -31,17 +31,22 @@ WebM, STL, OBJ, or GLB.
 
 ## Quick start
 
-You need Python 3 (with Flask). Then:
+You need Python 3 and git. Clone the repo, install the dependencies, and run:
 
 ```bash
+git clone https://github.com/drjenkin/minimaps.git
+cd minimaps
 pip install -r requirements.txt
 python backend/app.py
 ```
 
 Open <http://127.0.0.1:5001/> in your browser.
 
-On Windows you can just double-click **`launch.bat`**, which starts the server
-and opens the browser for you.
+> **Tip:** to keep dependencies isolated, create and activate a Python virtual
+> environment (`python -m venv .venv`) before running `pip install`.
+
+On Windows, once cloned, you can also just double-click **`launch.bat`**, which
+starts the server and opens the browser for you.
 
 ## Elevation data — pick your source
 
