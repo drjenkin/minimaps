@@ -75,6 +75,12 @@ licence terms.
 - **3D engine**: [three.js](https://threejs.org).
 - Built with the help of [Claude](https://claude.com/claude-code) 
 
+## License
+
+[MIT](LICENSE). Covers the Minimap Maker application code only - the map
+data and imagery (Esri, OpenStreetMap, Copernicus, OpenTopography) remain
+under their respective providers' terms.
+
 ## Credits
 
 By [Mike](https://x.com/ShutterCG). If you enjoy Minimap Maker, you can
