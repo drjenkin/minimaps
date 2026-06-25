@@ -313,6 +313,84 @@ function getDummyWaterTex() {
   return _dummyWaterTex;
 }
 
+// Separable gaussian blur of an N x N Float32 field. Edge-clamped.
+function gaussBlur2D(src, N, sigma) {
+  const r = Math.max(1, Math.ceil(sigma * 3));
+  const k = new Float32Array(2 * r + 1);
+  let ksum = 0;
+  for (let t = -r; t <= r; t++) { const w = Math.exp(-(t * t) / (2 * sigma * sigma)); k[t + r] = w; ksum += w; }
+  for (let t = 0; t < k.length; t++) k[t] /= ksum;
+  const tmp = new Float32Array(N * N), out = new Float32Array(N * N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let s = 0;
+    for (let t = -r; t <= r; t++) { const xx = Math.min(N - 1, Math.max(0, x + t)); s += src[y * N + xx] * k[t + r]; }
+    tmp[y * N + x] = s;
+  }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let s = 0;
+    for (let t = -r; t <= r; t++) { const yy = Math.min(N - 1, Math.max(0, y + t)); s += tmp[yy * N + x] * k[t + r]; }
+    out[y * N + x] = s;
+  }
+  return out;
+}
+
+// Colour FIELD probe grid: a low-res, heavily-smoothed map of the real sea
+// colour across the ocean. Unlike the old "two averaged colours" approach (which
+// flattened the whole sea to one tone), this preserves spatial variation - river
+// plumes, sandbanks, depth changes - while dissolving the blotchy raw patches.
+// The shader samples it per-pixel; LinearFilter upsamples the small field
+// smoothly so there are no hard edges.
+//
+// Technique: normalized convolution. Accumulate colour only where the mask says
+// water+ocean (rejecting glint/voids), gaussian-blur the colour AND the coverage
+// weight, then divide. Dividing by blurred weight means land never bleeds into
+// the water colour, and the water colour extrapolates cleanly to the shoreline.
+// Returns an N x N canvas, or null if no clean water was found.
+function buildOceanColourField(albedoCanvas, maskCanvas, N = 96) {
+  const small = (src) => {
+    const c = document.createElement('canvas');
+    c.width = N; c.height = N;
+    const x = c.getContext('2d');
+    x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+    x.drawImage(src, 0, 0, N, N);
+    return x.getImageData(0, 0, N, N).data;
+  };
+  const a = small(albedoCanvas);
+  const m = small(maskCanvas);
+
+  const cr = new Float32Array(N * N), cg = new Float32Array(N * N);
+  const cb = new Float32Array(N * N), cw = new Float32Array(N * N);
+  let anyWater = false;
+  for (let i = 0; i < N * N; i++) {
+    if (m[i * 4] < 150 || m[i * 4 + 2] < 120) continue;        // need water + ocean
+    const ar = a[i * 4], ag = a[i * 4 + 1], ab = a[i * 4 + 2];
+    const lum = 0.299 * ar + 0.587 * ag + 0.114 * ab;
+    if (lum > 200 || lum < 12) continue;                        // drop glint / voids
+    cr[i] = ar; cg[i] = ag; cb[i] = ab; cw[i] = 1; anyWater = true;
+  }
+  if (!anyWater) return null;
+
+  const sigma = N / 14;   // ~7 px at N=96: dissolves patches, keeps broad gradients
+  const br = gaussBlur2D(cr, N, sigma), bg = gaussBlur2D(cg, N, sigma);
+  const bb = gaussBlur2D(cb, N, sigma), bw = gaussBlur2D(cw, N, sigma);
+
+  const out = document.createElement('canvas');
+  out.width = N; out.height = N;
+  const octx = out.getContext('2d');
+  const img = octx.createImageData(N, N);
+  for (let i = 0; i < N * N; i++) {
+    const wgt = bw[i];
+    if (wgt > 1e-4) {
+      img.data[i * 4]     = Math.round(br[i] / wgt);
+      img.data[i * 4 + 1] = Math.round(bg[i] / wgt);
+      img.data[i * 4 + 2] = Math.round(bb[i] / wgt);
+    }
+    img.data[i * 4 + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  return out;
+}
+
 function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
   let waterTex;
   if (waterMaskCanvas) {
@@ -325,11 +403,17 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
     waterTex = getDummyWaterTex();
   }
 
-  // Mask R = water, G = normalized distance from shore (0 shore → 1 deep)
+  // Mask R = water, G = normalized distance from shore (0 shore → 1 deep).
+  // Colours default to a stylized palette; real-colour sampling is opt-in at
+  // runtime via setOceanColourProbes() (the 'Colour probes' toggle), so capture
+  // stays cheap and the user can flip the effect to compare.
   material.userData.waterMask      = { value: waterTex };
   material.userData.waterShallow   = { value: new THREE.Color(0x2b5566) }; // darker teal at coast
   material.userData.waterDeep      = { value: new THREE.Color(0x112338) }; // deep navy
   material.userData.waterHighlight = { value: new THREE.Color(0xeef4f4) }; // near-white foam
+  // Colour-probe field (opt-in): smoothed real-sea-colour map + on/off flag.
+  material.userData.uWaterColourField  = { value: getDummyWaterTex() };
+  material.userData.uWaterFieldEnabled = { value: 0 };
   material.userData.uTime          = { value: 0 };
   material.userData.uWaterEnabled  = { value: waterMaskCanvas ? 1 : 0 };
   // Shore fade range - start where the shader appears (close to coast =
@@ -362,6 +446,8 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
     shader.uniforms.waterShallow   = material.userData.waterShallow;
     shader.uniforms.waterDeep      = material.userData.waterDeep;
     shader.uniforms.waterHighlight = material.userData.waterHighlight;
+    shader.uniforms.uWaterColourField  = material.userData.uWaterColourField;
+    shader.uniforms.uWaterFieldEnabled = material.userData.uWaterFieldEnabled;
     shader.uniforms.uTime          = material.userData.uTime;
     shader.uniforms.uWaterEnabled  = material.userData.uWaterEnabled;
     shader.uniforms.uShoreFadeStart = material.userData.uShoreFadeStart;
@@ -379,6 +465,8 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
        uniform vec3 waterShallow;
        uniform vec3 waterDeep;
        uniform vec3 waterHighlight;
+       uniform sampler2D uWaterColourField;
+       uniform float uWaterFieldEnabled;
        uniform float uTime;
        uniform float uWaterEnabled;
        uniform float uShoreFadeStart;
@@ -471,13 +559,20 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
         // reached within ~6% offshore.
         float depthCurve = smoothstep(0.0, 0.06, depthNorm);
         vec3 wcol = mix(waterShallow, waterDeep, depthCurve);
+        // Colour probes: replace the two-tone gradient with the sampled,
+        // smoothed real-sea-colour field (spatially varying, no patches).
+        if (uWaterFieldEnabled > 0.5) {
+          wcol = texture2D(uWaterColourField, vMapUv).rgb;
+        }
 
         float n = wfbm(vMapUv * 5.0 + uTime * 0.015);
         wcol *= 0.97 + 0.04 * n;
 
         // Gated by oceanFlag - lakes / rivers contribute nothing. Their
-        // satellite imagery shows through cleanly.
-        diffuseColor.rgb = mix(diffuseColor.rgb, wcol, waterAmt * oceanFlag * 0.83 * shoreFade * uWaterEnabled);
+        // satellite imagery shows through cleanly. Near-full mix offshore so the
+        // blotchy raw sea pixels are replaced by the smooth probed colour;
+        // shoreFade keeps near-shore detail (beaches, shallows) visible.
+        diffuseColor.rgb = mix(diffuseColor.rgb, wcol, waterAmt * oceanFlag * 0.96 * shoreFade * uWaterEnabled);
       }
       `
     );
@@ -490,7 +585,7 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
       float waterAmt2  = ws2.r;
       float oceanFlag2 = ws2.b;
       float shoreFade2 = smoothstep(uShoreFadeStart, uShoreFadeEnd, ws2.g);
-      roughnessFactor = mix(roughnessFactor, 0.55, waterAmt2 * oceanFlag2 * shoreFade2 * uWaterEnabled);
+      roughnessFactor = mix(roughnessFactor, 0.92, waterAmt2 * oceanFlag2 * shoreFade2 * uWaterEnabled);
       `
     );
 
@@ -520,21 +615,21 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
       float oceanFlag3 = ws3.b;
       float shoreFade3 = smoothstep(uShoreFadeStart, uShoreFadeEnd, ws3.g);
       if (waterAmt3 > 0.02 && oceanFlag3 > 0.02) {
-        // Layer A - rotated 25°, scale 95
+        // Layer A - rotated 25°. Lower scale = broader, softer swell (less grain).
         float a1 = 0.436; // 25°
         mat2 R1 = mat2(cos(a1), -sin(a1), sin(a1), cos(a1));
-        vec2 uvA = R1 * vMapUv * 95.0 + vec2(uTime * 0.035, uTime * 0.022);
-        // Layer B - rotated -55°, scale 160
+        vec2 uvA = R1 * vMapUv * 45.0 + vec2(uTime * 0.035, uTime * 0.022);
+        // Layer B - rotated -55°.
         float a2 = -0.960; // -55°
         mat2 R2 = mat2(cos(a2), -sin(a2), sin(a2), cos(a2));
-        vec2 uvB = R2 * vMapUv * 160.0 + vec2(-uTime * 0.020, uTime * 0.041);
+        vec2 uvB = R2 * vMapUv * 80.0 + vec2(-uTime * 0.020, uTime * 0.041);
 
         float eps = 0.55;
         float h0 = wnoise(uvA)                + 0.7 * wnoise(uvB);
         float hx = wnoise(uvA + vec2(eps, 0)) + 0.7 * wnoise(uvB + vec2(eps, 0));
         float hy = wnoise(uvA + vec2(0, eps)) + 0.7 * wnoise(uvB + vec2(0, eps));
 
-        vec3 dN = vec3((h0 - hx) / eps, (h0 - hy) / eps, 0.0) * 0.08 * waterAmt3 * oceanFlag3 * shoreFade3 * uWaterEnabled;
+        vec3 dN = vec3((h0 - hx) / eps, (h0 - hy) / eps, 0.0) * 0.028 * waterAmt3 * oceanFlag3 * shoreFade3 * uWaterEnabled;
         normal = normalize(normal + dN);
       }
       `
@@ -944,6 +1039,38 @@ export function setWaterShader(enabled) {
     mat.userData.uWaterEnabled.value = enabled ? 1 : 0;
   }
   currentMesh.userData.filters.waterShader = enabled;
+}
+
+// Colour probes (opt-in): when enabled, sample the real sea colour from the
+// captured satellite image across the ocean areas and feed it to the shader's
+// shallow/deep gradient. When disabled, restore the stylized defaults. Mutates
+// the existing uniform Color objects, so it updates live with no recompile.
+export function setOceanColourProbes(enabled) {
+  if (!currentMesh) return;
+  const mat = currentMesh.userData.topMaterial;
+  if (!mat?.userData?.uWaterFieldEnabled) return;
+
+  if (enabled) {
+    const albedo = currentMesh.userData.albedoCanvas;       // stable captured image
+    const mask   = mat.userData.waterMask?.value?.image;    // water-info canvas
+    const field  = (albedo && mask) ? buildOceanColourField(albedo, mask) : null;
+    if (field) {
+      const tex = new THREE.CanvasTexture(field);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      const prev = mat.userData.uWaterColourField.value;
+      mat.userData.uWaterColourField.value = tex;
+      if (prev && prev.dispose && prev !== getDummyWaterTex()) prev.dispose();
+      mat.userData.uWaterFieldEnabled.value = 1;
+    } else {
+      mat.userData.uWaterFieldEnabled.value = 0;   // nothing to sample
+    }
+  } else {
+    mat.userData.uWaterFieldEnabled.value = 0;
+  }
+  currentMesh.userData.filters.waterProbes = enabled;
 }
 
 export function setSurfaceBumpStrength(strength) {

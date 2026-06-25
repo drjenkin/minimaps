@@ -121,6 +121,9 @@
             </select>
           </label>
           <button id="opentopo-key-btn" class="secondary" title="Add or change your free OpenTopography API key (needed for Copernicus elevation)">🔑 OpenTopo key</button>
+          <label class="dem-label">Rotation <span id="rotation-val">0°</span>
+            <input type="range" id="rotation-slider" min="0" max="359" step="1" value="0" title="Rotate the capture frame off North">
+          </label>
           <button id="capture-btn">Capture</button>
         </div>
         <div id="map-search">
@@ -251,16 +254,22 @@
             </div>
           </div>
 
-          <!-- Water shader UI hidden - current implementation isn't fit for
-               purpose. Elements kept in the DOM so existing wiring in main.js
-               continues to work; re-enable by removing the hidden attribute. -->
-          <div hidden>
+          <!-- Ocean shading: opt-in toggle. Mask is DEM-derived (no Overpass),
+               built at capture; this just flips the shader on/off. -->
+          <div>
             <h3>Water</h3>
             <label class="filter-row">
               <input type="checkbox" id="filter-water-shader">
               <div class="filter-info">
-                <div class="filter-name">Stylized ocean</div>
-                <div class="filter-desc">Waves, foam, and shoreline gradient over heightmap-detected sea.</div>
+                <div class="filter-name">Ocean shader</div>
+                <div class="filter-desc">Place a water shader over ocean areas. Can help to smooth out blotchy image data.</div>
+              </div>
+            </label>
+            <label class="filter-row">
+              <input type="checkbox" id="filter-water-probes">
+              <div class="filter-info">
+                <div class="filter-name">Colour probes</div>
+                <div class="filter-desc">Sample the real sea colour from the image and apply it as a smooth gradient.</div>
               </div>
             </label>
             <div class="filter-row filter-row-stack">

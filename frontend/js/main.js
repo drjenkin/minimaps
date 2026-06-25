@@ -7,7 +7,8 @@ const MAX_REGION_M = 30000;
 // graceful spin. This is the single knob - change it and the recording length
 // + rotation speed both follow. (~24 s reads as a calm showcase rotation.)
 const WEBM_ROTATION_SECONDS = 32;
-import { createPuck, enterPresentMode, exitPresentMode, setWaterShader, setWaterShoreFade, setSurfaceBumpStrength, setImageAdjust, setStyle, setZExaggeration, setCameraMode, getCameraMode, setPuckAlbedo, getFilterState, captureSnapshotPNG, recordRotation, getRecordingFileExtension, getPuckGeoParams, setBuildingsGroup, hasBuildings, clearBuildings, setFillLight } from './puck.js';
+import { createPuck, enterPresentMode, exitPresentMode, setWaterShader, setOceanColourProbes, setWaterShoreFade, setSurfaceBumpStrength, setImageAdjust, setStyle, setZExaggeration, setCameraMode, getCameraMode, setPuckAlbedo, getFilterState, captureSnapshotPNG, recordRotation, getRecordingFileExtension, getPuckGeoParams, setBuildingsGroup, hasBuildings, clearBuildings, setFillLight } from './puck.js';
+import { buildWaterMask } from './water.js';
 import { loadLibrary, saveToLibrary, deleteFromLibrary } from './library.js';
 import { exportSTL, exportOBJ, exportGLB } from './stl.js';
 import { fetchBuildings, buildBuildingGroup } from './buildings.js';
@@ -124,6 +125,10 @@ $('filter-water-shader').addEventListener('change', (e) => {
   if (!state.currentPuck) return;
   setWaterShader(e.target.checked);
 });
+$('filter-water-probes').addEventListener('change', (e) => {
+  if (!state.currentPuck) return;
+  setOceanColourProbes(e.target.checked);
+});
 
 function applyWaterShoreSettings() {
   const start = parseFloat($('water-shore-start').value);
@@ -158,6 +163,20 @@ function closeOpentopoKeyDialog() { $('opentopo-key-dialog').hidden = true; }
 $('opentopo-key-btn').addEventListener('click', () => {
   openOpentopoKeyDialog('Paste your free OpenTopography API key here');
 });
+
+// Capture rotation: lets users frame off-North. The slider visually rotates the
+// capture square; the value is read by the capture handler and threaded through
+// to map.js, which resamples the rotated region out of a north-up fetch.
+let _captureRotation = 0;
+const _rotSlider = $('rotation-slider');
+if (_rotSlider) {
+  _rotSlider.addEventListener('input', (e) => {
+    _captureRotation = parseInt(e.target.value, 10) || 0;
+    $('rotation-val').textContent = _captureRotation + '°';
+    const sq = $('capture-square');
+    if (sq) sq.style.transform = `rotate(${_captureRotation}deg)`;
+  });
+}
 
 $('opentopo-key-cancel').addEventListener('click', closeOpentopoKeyDialog);
 $('opentopo-key-save').addEventListener('click', () => {
@@ -355,6 +374,7 @@ $('filter-style').addEventListener('change', async (e) => {
 async function applyFilterPanelToPuck() {
   if (!state.currentPuck) return;
   setWaterShader($('filter-water-shader').checked);
+  setOceanColourProbes($('filter-water-probes').checked);
   applyWaterShoreSettings();
   setImageAdjust('brightness', parseFloat($('img-brightness').value));
   setImageAdjust('contrast',   parseFloat($('img-contrast').value));
@@ -444,7 +464,14 @@ $('resolution-select').addEventListener('change', async (e) => {
   sel.disabled = true;
   setBusy('Re-fetching imagery…');
   try {
-    const albedo = await refetchAlbedo(puck.data.bounds, puck.data.provider, newZoom, (m) => setBusy(m));
+    // Old saved pucks predate captureGeo - synthesise it from bounds (rotation 0).
+    const geo = puck.data.captureGeo || {
+      centerLat: (puck.data.bounds.north + puck.data.bounds.south) / 2,
+      centerLon: (puck.data.bounds.east + puck.data.bounds.west) / 2,
+      edgeM: puck.data.regionWidthM,
+      rotationDeg: 0,
+    };
+    const albedo = await refetchAlbedo(geo, puck.data.provider, newZoom, (m) => setBusy(m));
 
     // Safety net: if the requested zoom exceeds what the provider actually
     // stocks for this location, many tiles come back blank and the stitch is
@@ -622,11 +649,18 @@ $('capture-btn').addEventListener('click', async () => {
     setBusy('Stitching satellite tiles…');
     // Resolution is now a post-capture control - capture always uses the
     // default +3× zoom; the user refines it afterward without re-querying DEM.
-    const result = await capture(state.map, $('capture-square'), demtype, (m) => setBusy(m));
+    const result = await capture(state.map, $('capture-square'), demtype, (m) => setBusy(m), undefined, _captureRotation);
     result.center = {
       lat: (result.bounds.north + result.bounds.south) / 2,
       lon: (result.bounds.east + result.bounds.west) / 2,
     };
+
+    // Ocean only - DEM-derived (heightmap zero-elevation), no Overpass call,
+    // so no network hang. Pass overpass=null to skip the inland-water query.
+    // The mask is built from the (rotated, if rotated) heightmap, so it stays
+    // aligned with the albedo. Free; runs in a couple of ms.
+    const waterMask = buildWaterMask(null, result.heightmap, result.bounds, result.demtype);
+    if (waterMask) result.waterMask = waterMask;
 
     setBusy('Building 3D puck…');
     const puck = await createPuck(result, {
@@ -1070,6 +1104,7 @@ async function loadPuckFromItem(item) {
     const f = item.data.filters || {};
     const img = f.image || {};
     $('filter-water-shader').checked = f.waterShader !== false;
+    $('filter-water-probes').checked = f.waterProbes === true;
     $('filter-style').value          = f.style || 'none';
     $('puck-zexag').value            = savedZExag;
     $('puck-zexag-val').textContent  = savedZExag.toFixed(2) + '×';

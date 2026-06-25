@@ -8,7 +8,7 @@
 
 const MASK_SIZE = 1024;
 const SHORE_BAND_METERS = 6000;     // real-world width of the shore→deep band
-const OCEAN_DEMS = new Set(['SRTMGL1', 'SRTMGL3', 'NASADEM', 'aws-terrain']);
+const OCEAN_DEMS = new Set(['SRTMGL1', 'SRTMGL3', 'NASADEM', 'aws-terrain', 'COP30']);
 
 export async function fetchWater(bounds) {
   const qs = new URLSearchParams({

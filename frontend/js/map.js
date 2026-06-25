@@ -69,12 +69,119 @@ export function usefulZoomRange(bounds, provider, captureZoom, coarseSteps = 5) 
   return { lo, hi, sat, providerMax };
 }
 
+// === Rotation support ==========================================================
+// Capture can be rotated off North. The map stays north-up; instead we fetch the
+// axis-aligned bbox that ENCLOSES the rotated square, then resample the rotated
+// square out of it. Imagery (canvas affine) and elevation (grid bilinear) use
+// the SAME (u,v)->enclosing mapping, so they always align with each other.
+// At rotation 0 every step collapses to the original north-up behaviour.
+
+const M_PER_DEG_LAT = 111320;
+
+// Axis-aligned bbox (north-up) that contains the rotated square.
+function enclosingBounds(centerLat, centerLon, edgeM, rotationDeg) {
+  const a = rotationDeg * Math.PI / 180;
+  const ext = (edgeM / 2) * (Math.abs(Math.cos(a)) + Math.abs(Math.sin(a)));
+  const dLat = ext / M_PER_DEG_LAT;
+  const dLon = ext / (M_PER_DEG_LAT * Math.cos(centerLat * Math.PI / 180));
+  return { north: centerLat + dLat, south: centerLat - dLat,
+           west: centerLon - dLon, east: centerLon + dLon };
+}
+
+// Returns fn(u,v) -> [eu, ev], normalised position inside the enclosing bbox
+// (eu: 0=west..1=east, ev: 0=north..1=south) for a sample at square-frame
+// (u: 0=left..1=right, v: 0=top..1=bottom). Shared by imagery + elevation.
+function makeSrcNorm(centerLat, centerLon, edgeM, rotationDeg, enc) {
+  const a = rotationDeg * Math.PI / 180;
+  const cosA = Math.cos(a), sinA = Math.sin(a);
+  const cosLat = Math.cos(centerLat * Math.PI / 180);
+  const encW = enc.east - enc.west, encH = enc.north - enc.south;
+  return (u, v) => {
+    const sx = (u - 0.5) * edgeM;      // east offset in the square's own frame
+    const sy = (0.5 - v) * edgeM;      // north offset (v points down)
+    const ge =  sx * cosA + sy * sinA; // rotate square frame into geographic ENU
+    const gn = -sx * sinA + sy * cosA;
+    const lat = centerLat + gn / M_PER_DEG_LAT;
+    const lon = centerLon + ge / (M_PER_DEG_LAT * cosLat);
+    return [(lon - enc.west) / encW, (enc.north - lat) / encH];
+  };
+}
+
+// Extract the rotated square from the enclosing canvas via a single affine
+// transform (fast, GPU-backed). The affine is derived from srcNorm at three
+// corners, so it matches the elevation resample exactly.
+function rotatedAlbedo(encCanvas, srcNorm) {
+  const O = encCanvas.width;                 // 4096
+  const p00 = srcNorm(0, 0), p10 = srcNorm(1, 0), p01 = srcNorm(0, 1);
+  // enclosing pixel coords = norm * O; linear in (u,v):
+  //   encpx = A*u + B*v + E,  encpy = C*u + D*v + F
+  const A = (p10[0] - p00[0]) * O, B = (p01[0] - p00[0]) * O, E = p00[0] * O;
+  const C = (p10[1] - p00[1]) * O, D = (p01[1] - p00[1]) * O, F = p00[1] * O;
+  const det = A * D - B * C;
+  if (Math.abs(det) < 1e-9) return encCanvas;
+  // dest = O*[u;v] = O*inv([A B;C D])*([encpx;encpy]-[E;F])
+  const iA = D / det, iB = -B / det, iC = -C / det, iD = A / det;
+  const m11 = O * iA, m21 = O * iB;
+  const m12 = O * iC, m22 = O * iD;
+  const dx = -(m11 * E + m21 * F);
+  const dy = -(m12 * E + m22 * F);
+  const out = document.createElement('canvas');
+  out.width = O; out.height = O;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.setTransform(m11, m12, m21, m22, dx, dy);
+  ctx.drawImage(encCanvas, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return out;
+}
+
+// Bilinear sample of 4 (possibly null) DEM corners. Returns null only if all
+// four are missing; otherwise averages the available ones by weight.
+function bilinearNullable(v00, v10, v01, v11, tx, ty) {
+  const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty,       w11 = tx * ty;
+  let sum = 0, wsum = 0;
+  if (v00 != null) { sum += v00 * w00; wsum += w00; }
+  if (v10 != null) { sum += v10 * w10; wsum += w10; }
+  if (v01 != null) { sum += v01 * w01; wsum += w01; }
+  if (v11 != null) { sum += v11 * w11; wsum += w11; }
+  return wsum > 0 ? sum / wsum : null;
+}
+
+// Resample the rotated square out of the enclosing elevation grid into an N x N
+// grid (row 0 = top of the square, matching the albedo orientation).
+function rotatedHeightmap(encGrid, srcNorm, N) {
+  const { ncols, nrows, values } = encGrid;
+  const out = new Array(N * N);
+  for (let j = 0; j < N; j++) {
+    const v = N === 1 ? 0 : j / (N - 1);
+    for (let i = 0; i < N; i++) {
+      const u = N === 1 ? 0 : i / (N - 1);
+      const [eu, ev] = srcNorm(u, v);
+      const fx = Math.min(ncols - 1, Math.max(0, eu * (ncols - 1)));
+      const fy = Math.min(nrows - 1, Math.max(0, ev * (nrows - 1)));
+      const x0 = Math.floor(fx), y0 = Math.floor(fy);
+      const x1 = Math.min(ncols - 1, x0 + 1), y1 = Math.min(nrows - 1, y0 + 1);
+      out[j * N + i] = bilinearNullable(
+        values[y0 * ncols + x0], values[y0 * ncols + x1],
+        values[y1 * ncols + x0], values[y1 * ncols + x1],
+        fx - x0, fy - y0);
+    }
+  }
+  return { ncols: N, nrows: N, values: out };
+}
+
 // Re-stitch just the albedo for an already-captured puck at a new zoom level.
-// Used by the post-capture Resolution control - no heightmap re-query.
-export async function refetchAlbedo(bounds, provider, captureZoom, onProgress) {
+// Used by the post-capture Resolution control - no heightmap re-query. Takes
+// the capture geometry so rotated captures re-stitch at the correct angle.
+export async function refetchAlbedo(captureGeo, provider, captureZoom, onProgress) {
+  const { centerLat, centerLon, edgeM, rotationDeg = 0 } = captureGeo;
+  const enc = enclosingBounds(centerLat, centerLon, edgeM, rotationDeg);
   const name = PROVIDERS[provider]?.name || provider;
   onProgress?.(`Re-stitching ${name} at z${captureZoom}…`);
-  return stitchTiles(bounds, captureZoom, provider);
+  const encCanvas = await stitchTiles(enc, captureZoom, provider);
+  if (!rotationDeg) return encCanvas;
+  return rotatedAlbedo(encCanvas, makeSrcNorm(centerLat, centerLon, edgeM, rotationDeg, enc));
 }
 
 export function setupMap(elId, providerKey = DEFAULT_PROVIDER) {
@@ -123,19 +230,21 @@ export function setImagery(map, providerKey) {
 
 // Compute the bounds covered by the on-screen square, stitch tiles at zoom+1
 // for higher detail, request the heightmap.
-export async function capture(map, squareEl, demtype, onProgress, captureZoomOverride) {
+export async function capture(map, squareEl, demtype, onProgress, captureZoomOverride, rotationDeg = 0) {
   const mapEl = map.getContainer();
   const mapRect = mapEl.getBoundingClientRect();
   const sq = squareEl.getBoundingClientRect();
 
-  const x1 = sq.left - mapRect.left;
-  const y1 = sq.top - mapRect.top;
-  const x2 = sq.right - mapRect.left;
-  const y2 = sq.bottom - mapRect.top;
-
-  const nw = map.containerPointToLatLng([x1, y1]);
-  const se = map.containerPointToLatLng([x2, y2]);
-  const bounds = { north: nw.lat, south: se.lat, west: nw.lng, east: se.lng };
+  // Use the square's CENTRE (rotation-invariant) and its UNROTATED edge length.
+  // getBoundingClientRect grows when the element is CSS-rotated, so we take the
+  // edge from offsetWidth instead of the rect.
+  const cx = (sq.left + sq.right) / 2 - mapRect.left;
+  const cy = (sq.top + sq.bottom) / 2 - mapRect.top;
+  const S = squareEl.offsetWidth || (sq.width);     // unrotated edge, CSS px
+  const center = map.containerPointToLatLng([cx, cy]);
+  const pL = map.containerPointToLatLng([cx - S / 2, cy]);
+  const pR = map.containerPointToLatLng([cx + S / 2, cy]);
+  const edgeM = Math.abs(pR.lng - pL.lng) * 111320 * Math.cos(center.lat * Math.PI / 180);
 
   const provider = activeProvider;
   const maxZ = PROVIDERS[provider].maxZoom;
@@ -146,17 +255,37 @@ export async function capture(map, squareEl, demtype, onProgress, captureZoomOve
     ? Math.max(0, Math.min(maxZ, Math.round(captureZoomOverride)))
     : Math.min(baseZoom + 3, maxZ);
 
+  // Enclosing north-up bbox of the (possibly rotated) square, plus the shared
+  // square-frame -> enclosing mapping. At rotationDeg 0 the enclosing bbox IS
+  // the square and the mapping is the identity, so behaviour is unchanged.
+  const enc = enclosingBounds(center.lat, center.lng, edgeM, rotationDeg);
+  const srcNorm = makeSrcNorm(center.lat, center.lng, edgeM, rotationDeg, enc);
+
   onProgress?.('Stitching tiles…');
-  const albedo = await stitchTiles(bounds, captureZoom, provider);
+  const encCanvas = await stitchTiles(enc, captureZoom, provider);
+  const albedo = rotationDeg ? rotatedAlbedo(encCanvas, srcNorm) : encCanvas;
 
   onProgress?.('Fetching elevation data…');
-  const heightmap = await fetchHeightmap(bounds, demtype, onProgress);
+  const encGrid = await fetchHeightmap(enc, demtype, onProgress);
+  let heightmap = encGrid;
+  if (rotationDeg) {
+    const a = rotationDeg * Math.PI / 180;
+    const k = Math.abs(Math.cos(a)) + Math.abs(Math.sin(a));
+    const N = Math.max(64, Math.round(Math.min(encGrid.ncols, encGrid.nrows) / k));
+    heightmap = rotatedHeightmap(encGrid, srcNorm, N);
+  }
 
-  // Region width in meters - passed through for the scale-aware shader.
-  const midLat = (bounds.north + bounds.south) / 2;
-  const regionWidthM = (bounds.east - bounds.west) * 111320 * Math.cos(midLat * Math.PI / 180);
+  // Synthetic axis-aligned bounds that represent the SQUARE's true size, so
+  // downstream width/scale math sees edgeM (not the larger enclosing box).
+  // Centre is preserved exactly, so geocoding / naming are unaffected.
+  const dLat = (edgeM / 2) / 111320;
+  const dLon = (edgeM / 2) / (111320 * Math.cos(center.lat * Math.PI / 180));
+  const bounds = { north: center.lat + dLat, south: center.lat - dLat,
+                   west: center.lng - dLon, east: center.lng + dLon };
 
-  return { albedo, heightmap, bounds, demtype, captureZoom, provider, regionWidthM };
+  const regionWidthM = edgeM;
+  const captureGeo = { centerLat: center.lat, centerLon: center.lng, edgeM, rotationDeg };
+  return { albedo, heightmap, bounds, demtype, captureZoom, provider, regionWidthM, rotationDeg, captureGeo };
 }
 
 function lonToTileX(lon, z) { return (lon + 180) / 360 * Math.pow(2, z); }
