@@ -1,7 +1,7 @@
 import { setupMap, capture, getRegionWidthMeters, refetchAlbedo, usefulZoomRange, getOpentopoKey, setOpentopoKey, NeedsOpentopoKeyError } from './map.js';
 
 const MIN_REGION_M = 800;
-const MAX_REGION_M = 30000;
+const MAX_REGION_M = 40000;
 
 // Seconds for one full rotation in the exported WebM. Higher = slower, more
 // graceful spin. This is the single knob - change it and the recording length
