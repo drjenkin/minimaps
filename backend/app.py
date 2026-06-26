@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 
 
 # In-process ring buffer of recent log lines, fed by _log(). Polled by the
@@ -624,6 +624,56 @@ def geocode():
         return jsonify({"error": f"Nominatim HTTP {e.code}"}), 502
     except urllib.error.URLError as e:
         return jsonify({"error": "Nominatim network error", "detail": str(e.reason)}), 502
+
+
+@app.route("/api/transcode", methods=["POST"])
+def transcode():
+    """Transcode an uploaded WebM rotation clip to MP4 (H.264) via ffmpeg.
+
+    The browser records WebM when it can't natively encode MP4; X/Twitter and
+    many tools reject WebM, so we convert server-side. Raw clip bytes arrive as
+    the request body. Returns the MP4 bytes, or an error the client can fall
+    back on (saving the original WebM)."""
+    import subprocess
+    import tempfile
+    import shutil
+
+    data = request.get_data()
+    if not data:
+        return jsonify({"error": "empty body"}), 400
+    if len(data) > 250 * 1024 * 1024:            # 250 MB hard cap
+        return jsonify({"error": "clip too large"}), 413
+
+    tmp = tempfile.mkdtemp(prefix="mm_transcode_")
+    src = os.path.join(tmp, "in.webm")
+    dst = os.path.join(tmp, "out.mp4")
+    try:
+        with open(src, "wb") as f:
+            f.write(data)
+        # yuv420p + even dimensions = maximum player/social compatibility;
+        # +faststart moves the index to the front for instant web playback.
+        cmd = [
+            "ffmpeg", "-y", "-i", src,
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-crf", "20", "-preset", "veryfast",
+            "-movflags", "+faststart", "-an", dst,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=180)
+        if proc.returncode != 0 or not os.path.exists(dst):
+            tail = proc.stderr.decode("utf-8", "ignore")[-500:]
+            _log(f"transcode: ffmpeg failed rc={proc.returncode} — {tail}")
+            return jsonify({"error": "ffmpeg failed"}), 500
+        with open(dst, "rb") as f:
+            mp4 = f.read()
+        _log(f"transcode: {len(data)//1024} KB webm -> {len(mp4)//1024} KB mp4")
+        return Response(mp4, mimetype="video/mp4")
+    except FileNotFoundError:
+        return jsonify({"error": "ffmpeg not installed"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "transcode timeout"}), 504
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

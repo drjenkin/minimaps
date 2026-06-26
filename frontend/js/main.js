@@ -994,12 +994,29 @@ $('share-menu').addEventListener('click', async (e) => {
       // The encoder picks MP4 if the browser supports H.264 MediaRecorder,
       // otherwise falls back to WebM. Use the blob's actual mime type so the
       // saved file has the matching extension.
-      const ext = getRecordingFileExtension(blob.type);
-      if (ext === 'webm') {
-        flashToast('Your browser does not support MP4 recording - saved as WebM. Twitter / X may reject it.', 6000);
+      let outBlob = blob;
+      let ext = getRecordingFileExtension(blob.type);
+      if (ext !== 'mp4') {
+        // Browser recorded WebM - convert to MP4 server-side (ffmpeg) so the
+        // file plays everywhere (X/Twitter, iMessage, etc). If the server can't
+        // do it, fall back to saving the original WebM.
+        setBusy('Converting to MP4…');
+        try {
+          const res = await fetch('/api/transcode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: blob,
+          });
+          if (!res.ok) throw new Error('transcode HTTP ' + res.status);
+          outBlob = await res.blob();
+          ext = 'mp4';
+        } catch (e) {
+          console.warn('[video] MP4 transcode failed, saving WebM:', e);
+          flashToast('Could not convert to MP4 - saved as WebM instead.', 6000);
+        }
       }
-      setBusy(`Encoding ${ext.toUpperCase()}…`);
-      downloadBlob(blob, exportBaseName() + '.' + ext);
+      setBusy(`Saving ${ext.toUpperCase()}…`);
+      downloadBlob(outBlob, exportBaseName() + '.' + ext);
     } catch (err) {
       console.error(err);
       alert('Recording failed: ' + err.message);
