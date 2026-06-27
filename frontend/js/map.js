@@ -203,6 +203,27 @@ export function setupMap(elId, providerKey = DEFAULT_PROVIDER) {
     pane: 'overlayPane',
   });
   labelsLayer.addTo(map);
+
+  // Fine zoom: hold Shift while scrolling to zoom in small (0.05) steps instead
+  // of Leaflet's 0.25 snap. We intercept the wheel event in the capture phase
+  // (before Leaflet's own scroll-zoom handler), temporarily drop zoomSnap to 0
+  // so the fractional step isn't rounded away, and zoom toward the cursor.
+  // Without Shift the event passes straight through to Leaflet unchanged.
+  const FINE_ZOOM_STEP = 0.05;
+  const el = map.getContainer();
+  el.addEventListener('wheel', (e) => {
+    if (!e.shiftKey) return;                 // normal scroll = Leaflet's default
+    e.preventDefault();
+    e.stopImmediatePropagation();            // suppress Leaflet's wheel handler
+    const dir = e.deltaY < 0 ? 1 : -1;
+    const rect = el.getBoundingClientRect();
+    const pt = L.point(e.clientX - rect.left, e.clientY - rect.top);
+    const prevSnap = map.options.zoomSnap;
+    map.options.zoomSnap = 0;                 // allow a fractional target zoom
+    map.setZoomAround(pt, map.getZoom() + dir * FINE_ZOOM_STEP, { animate: false });
+    map.options.zoomSnap = prevSnap;          // restore for normal scrolling
+  }, { capture: true, passive: false });
+
   return map;
 }
 
