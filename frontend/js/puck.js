@@ -642,13 +642,7 @@ function applyWaterShader(material, waterMaskCanvas, albedoCanvas) {
 function buildPuckMesh(heightmap, albedoCanvas, zExag, bounds, waterMaskCanvas) {
   const { ncols, nrows, values } = heightmap;
 
-  let minH = Infinity, maxH = -Infinity;
-  for (const v of values) {
-    if (v == null) continue;
-    if (v < minH) minH = v;
-    if (v > maxH) maxH = v;
-  }
-  if (!isFinite(minH)) { minH = 0; maxH = 1; }
+  const { minH, maxH } = robustHeightRange(values);
   const heightRange = Math.max(maxH - minH, 1);
 
   // True vertical scale on the puck (before exaggeration):
@@ -707,6 +701,26 @@ function buildPuckMesh(heightmap, albedoCanvas, zExag, bounds, waterMaskCanvas) 
   };
 }
 
+// Robust elevation range for vertical scaling. The puck height is driven by
+// (max - min) elevation; a single nodata spike (e.g. one -4245 m pixel in
+// otherwise 480-610 m terrain) inflates that ~36x and turns the puck into a
+// thin terrain film on a giant empty base. We reject an extreme ONLY when it's
+// a genuine outlier - more than one core spread (p1..p99) beyond the
+// percentile - so clean terrain with real peaks/valleys is never clipped.
+function robustHeightRange(values) {
+  const s = [];
+  for (const v of values) if (v != null) s.push(v);
+  if (!s.length) return { minH: 0, maxH: 1 };
+  s.sort((a, b) => a - b);
+  const at = (p) => s[Math.min(s.length - 1, Math.max(0, Math.floor(s.length * p)))];
+  const lo = s[0], hi = s[s.length - 1];
+  const p1 = at(0.01), p99 = at(0.99);
+  const core = Math.max(p99 - p1, 1);
+  const minH = (p1 - lo > core) ? p1 : lo;   // clamp only if the extreme is an outlier
+  const maxH = (hi - p99 > core) ? p99 : hi;
+  return { minH, maxH: Math.max(maxH, minH + 1) };
+}
+
 // Build a closed manifold: terrain top + flat base + 4 side walls (top edge
 // follows terrain, bottom edge is flat). Material group 0 = top, group 1 = sides+base.
 function buildTerrainBoxGeometry({
@@ -747,7 +761,9 @@ function buildTerrainBoxGeometry({
     c = Math.max(0, Math.min(ncols - 1, c));
     r = Math.max(0, Math.min(nrows - 1, r));
     const v = values[r * ncols + c];
-    const norm = v == null ? 0 : (v - minH) / heightRange;
+    // Clamp to [0,1]: values outside the robust range (outlier spikes) pin to
+    // the base/top instead of poking through the puck.
+    const norm = v == null ? 0 : Math.min(1, Math.max(0, (v - minH) / heightRange));
     let y = baseThickness + norm * terrainHeight;
 
     if (displacement > 0 && bumpPixelData) {
@@ -1183,13 +1199,7 @@ function rebuildGeometry() {
   const zExag = ud.zExaggeration ?? 1.0;
   const displacement = ud.displacement ?? 0;
 
-  let minH = Infinity, maxH = -Infinity;
-  for (const v of values) {
-    if (v == null) continue;
-    if (v < minH) minH = v;
-    if (v > maxH) maxH = v;
-  }
-  if (!isFinite(minH)) { minH = 0; maxH = 1; }
+  const { minH, maxH } = robustHeightRange(values);
   const heightRange = Math.max(maxH - minH, 1);
 
   const midLat = (bounds.north + bounds.south) / 2;

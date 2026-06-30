@@ -293,6 +293,8 @@ TILE_PROVIDERS = {
     "esri-ocean":    lambda z, x, y: f"https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}",
     "esri-labels":   lambda z, x, y: f"https://services.arcgisonline.com/arcgis/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
     "aws-terrain":   lambda z, x, y: f"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+    # EOX Sentinel-2 cloudless 2020 (CC BY 4.0). Web-Mercator WMTS REST tiles.
+    "eox-s2-2020":   lambda z, x, y: f"https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg",
 }
 
 

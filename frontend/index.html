@@ -73,7 +73,7 @@
           <h3>Data sources</h3>
           <ul class="about-credits">
             <li><strong>Elevation</strong>: Copernicus DEM (ESA, free for personal use), NASA SRTM, JAXA AW3D, AWS Terrain Tiles. Served via <a href="https://opentopography.org" target="_blank" rel="noopener">OpenTopography</a> where applicable.</li>
-            <li><strong>Satellite imagery</strong>: Esri World Imagery (© Esri, Maxar, Earthstar Geographics).</li>
+            <li><strong>Satellite imagery</strong>: Esri World Imagery (© Esri, Maxar, Earthstar Geographics); <a href="https://s2maps.eu" target="_blank" rel="noopener">Sentinel-2 cloudless 2020</a> by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2020), CC BY 4.0.</li>
             <li><strong>Map / buildings / water</strong>: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, via the Overpass API.</li>
             <li><strong>Place names</strong>: <a href="https://nominatim.org" target="_blank" rel="noopener">Nominatim</a> reverse geocoding.</li>
             <li><strong>3D engine</strong>: <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>.</li>
@@ -114,6 +114,9 @@
         <div id="map"></div>
         <div id="map-overlay"><div id="capture-square"></div></div>
         <div id="map-controls">
+          <label class="dem-label">Imagery
+            <select id="imagery-select"></select>
+          </label>
           <label class="dem-label">Elevation
             <select id="dem-select">
               <option value="COP30" selected>Copernicus DEM 30m (needs OpenTopo key)</option>

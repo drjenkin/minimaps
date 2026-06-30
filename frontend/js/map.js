@@ -10,6 +10,12 @@ const PROVIDERS = {
     maxZoom: 19,
     attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
   },
+  'eox-s2-2020': {
+    name: 'Sentinel-2 cloudless 2020',
+    // s2cloudless is ~10 m/px native; beyond z14 it's upscaled, so cap there.
+    maxZoom: 14,
+    attribution: 'Sentinel-2 cloudless 2020 by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2020)',
+  },
 };
 
 const DEFAULT_PROVIDER = 'esri';
@@ -243,7 +249,11 @@ export function setImagery(map, providerKey) {
   if (currentLayer) map.removeLayer(currentLayer);
   const p = PROVIDERS[providerKey];
   currentLayer = L.tileLayer(`/api/tile/${providerKey}/{z}/{y}/{x}`, {
-    maxZoom: p.maxZoom,
+    // Let the map zoom in for framing regardless of provider; upscale tiles
+    // beyond the provider's native max rather than going blank. Capture caps
+    // its request zoom to the provider max separately (usefulZoomRange).
+    maxZoom: 19,
+    maxNativeZoom: p.maxZoom,
     attribution: p.attribution,
   }).addTo(map);
   activeProvider = providerKey;
@@ -523,13 +533,14 @@ async function fetchAwsTerrain(bounds) {
     const r = pixels[i * 4];
     const g = pixels[i * 4 + 1];
     const b = pixels[i * 4 + 2];
-    // (0,0,0) = elevation -32768, which is the sentinel for missing data
-    // (failed tile fetch left the canvas black). Treat as null.
-    if (r === 0 && g === 0 && b === 0) {
-      values[i] = null;
-    } else {
-      values[i] = (r * 256 + g + b / 256) - 32768;
-    }
+    const v = (r * 256 + g + b / 256) - 32768;
+    // Plausibility gate. The Terrarium nodata sentinel decodes to ~-32768, and
+    // near-sentinel pixels (e.g. a single non-black nodata texel) slip past an
+    // exact-(0,0,0) check - a single one of those blows minH to ~-32768, which
+    // makes the puck a thin film of real terrain on a giant empty base. Reject
+    // anything outside real-world elevation range (below the Challenger Deep
+    // ~-10935 m or above Everest 8849 m) as nodata.
+    values[i] = (v < -11000 || v > 9000) ? null : v;
   }
 
   return {

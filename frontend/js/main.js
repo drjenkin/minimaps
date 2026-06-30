@@ -1,4 +1,4 @@
-import { setupMap, capture, getRegionWidthMeters, refetchAlbedo, usefulZoomRange, getOpentopoKey, setOpentopoKey, NeedsOpentopoKeyError } from './map.js';
+import { setupMap, capture, getRegionWidthMeters, refetchAlbedo, usefulZoomRange, getProviders, setImagery, getOpentopoKey, setOpentopoKey, NeedsOpentopoKeyError } from './map.js';
 
 const MIN_REGION_M = 800;
 const MAX_REGION_M = 40000;
@@ -108,6 +108,20 @@ function switchView(name) {
 document.getElementById('app').appendChild($('filters-panel'));
 
 state.map = setupMap('map');
+
+// Imagery picker - populate from available providers and switch the basemap on
+// change. The chosen provider is read at capture time (setImagery sets it active).
+(() => {
+  const sel = $('imagery-select');
+  if (!sel) return;
+  for (const { key, name } of getProviders()) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change', (e) => setImagery(state.map, e.target.value));
+})();
 
 // Filters panel - toggle on button click, explicit close via × button. No
 // auto-close on outside click so the panel can stay open while inspecting
