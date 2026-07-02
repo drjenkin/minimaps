@@ -1383,26 +1383,24 @@ export function captureSnapshotPNG({ width = 1440, height = 1080, overlay } = {}
   return dataURL;
 }
 
-// Records one full rotation as a WebM. Uses manual-frame capture so each
-// rendered frame is pushed to the stream exactly once (no browser sampling
-// jitter, no dropped frames). VP9 → VP8 fallback. 12 Mbps for clean motion.
-// Mime types in preference order. MP4/H.264 is Twitter / X / Bluesky / most
-// social platforms' native format and plays everywhere without re-encoding,
-// so we try it first; WebM is the fallback for browsers that don't yet
-// expose H.264 through MediaRecorder (mostly older Firefox).
+// Mime types in preference order. We now PREFER WebM.
 //
-// Important: the profile/level code must permit the output resolution. We
-// render at 1440×1080, which requires AT LEAST Level 4.0. Earlier we picked
-// Baseline 3.1 (avc1.42E01F) which caps at 720p - the encoder produced
-// garbage frames silently. The codes below all cover 1080p properly.
+// WebM records via manual-frame capture (captureStream(0) + requestFrame) - one
+// rendered frame pushed exactly once, frame-perfect and immune to render-timing
+// wobble. Chrome's native MP4/H.264 path needs a steady-rate stream instead, and
+// under heavier renders (e.g. perspective view) the frame timing drifts and the
+// encoder emits a fully-corrupt "coloured noise" video. So we record WebM (the
+// reliable path) and transcode to MP4 server-side (ffmpeg) for a clean H.264 file
+// that plays on X / Bluesky / everywhere. Native MP4 stays LAST as the fallback
+// for browsers that can't record WebM (Safari - whose MP4 encoder is reliable).
 const VIDEO_MIME_PREFERENCE = [
-  'video/mp4;codecs=avc1.640028',   // H.264 High @ Level 4.0 - best quality
-  'video/mp4;codecs=avc1.4D4028',   // H.264 Main @ Level 4.0
-  'video/mp4;codecs=avc1.42E028',   // H.264 Baseline @ Level 4.0
-  'video/mp4',
   'video/webm;codecs=vp9',
   'video/webm;codecs=vp8',
   'video/webm',
+  'video/mp4;codecs=avc1.640028',   // H.264 High @ Level 4.0 - Safari fallback
+  'video/mp4;codecs=avc1.4D4028',   // H.264 Main @ Level 4.0
+  'video/mp4;codecs=avc1.42E028',   // H.264 Baseline @ Level 4.0
+  'video/mp4',
 ];
 
 function pickBestVideoMime() {
